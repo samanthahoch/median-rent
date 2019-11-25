@@ -1,12 +1,12 @@
-#######################################
-#                                     #
-#   WILDFIRE EXPOSURE MONITOR SERVER  #         
-#                                     #
-#######################################
+################################
+#                              #
+#   MEDIAN RENT VIEWER SERVER  #         
+#                              #
+################################
 
-##############
-#HOUSEKEEPING#
-##############
+################
+# HOUSEKEEPING #
+################
 
 suppressPackageStartupMessages(library(shiny))
 suppressPackageStartupMessages(library(htmltools))
@@ -21,13 +21,11 @@ suppressPackageStartupMessages(library(shinythemes))
 suppressPackageStartupMessages(library(data.table))
 suppressPackageStartupMessages(library(leaflet.extras))
 
-# setwd("Z:/Work/Coop/Fall_2019/median-rent")
 
 server <- function(input, output, session) {
   
   options(stringsAsFactors = F, scipen = 9999)
-  initial_state <- "CA"
-  
+
   ################
   # READ IN DATA #
   ################
@@ -35,7 +33,7 @@ server <- function(input, output, session) {
   # state boundary map (projected to 4326)
   states_all <- st_read("data/state boundary/WesternStates_4326.shp", quiet = T)
   
-  # all rent data data
+  # all rent data 
   rent_files <- list.files("data/rent", pattern = ".csv")
   
   rent_list <- list()
@@ -52,46 +50,28 @@ server <- function(input, output, session) {
   colnames(rent_all)[colnames(rent_all)=="state_alpha"] <- "state"
   rent_all$CountyID <- as.character(rent_all$CountyID)
   
-  
-  # counties
+  # counties (projected to 4326)
   print("Reading in county data")
   counties_all <- readRDS("data/county/counties_western_4326.RDS")
   counties_all$CountyID <- as.character(counties_all$CountyID)
   
-  # reads in the spatial data for the given state
-  # GLOBAL VARIABLES UPDATED:
-  # - rent  <- (data.frame) 
-  # - counties <- (sf object) the accumulation Cnty 
-  # - st  <- (sf object) the state boundary
-  readData <- function(state_code) {
-    print(paste("Reading data for", state_code))
-    
-    rent <<- rent_all %>% filter(state == state_code) %>% mutate(SelecRent = rent50_1)
-    
-    # county map (with CountyID as character)
-    counties <<- counties_all %>% filter(Code == state_code)
-    
-    # select this state
-    st <<- states_all[states_all$STATE_ABBR == state_code, ]
-    
-  }
-  
-  # complete intial load of data 
-  readData(initial_state)
-  
-  # store global variables in reactive values
-  # NOTE: this is important if reactive statements rely on these. The reactive statements will
-  #       only recalculate if this reactive value is changed.
-  react_rent <- reactiveVal(rent)
-  
+
   #############################
   #   CREATE REACTIVE VALUES  #
   #############################
   
-  # selected Cntys list 
+  # reactive variables for spatial data
+  react_rent <- reactiveVal()
+  react_counties <- reactiveVal()
+  react_state <- reactiveVal()
+  
+  # selected state code (intialized with CA)
+  state_code <- reactiveVal("CA")
+  
+  # selected counties list 
   myselection <- reactiveVal(c())
   
-  # Cnty data based on current filters
+  # county data based on current filters
   currCnty_data <- reactiveVal()
   
   # rent data based on current filters
@@ -105,14 +85,32 @@ server <- function(input, output, session) {
   timeperiod <- reactiveVal(c(years[1], years[length(years)]))
   
   
-  #############################
-  #   CREATE rent/Cnty DATA    #
-  #############################
+  ###################
+  #   CREATE DATA   #
+  ###################
   
-  # The current rent and Cnty data will only be altered when the update button is pressed. The argument
+  # updates the spatial data when state code is updated
+  observeEvent(state_code(), {
+    print(paste("Reading data for", state_code()))
+    
+    rent <- rent_all %>% filter(state == state_code()) %>% mutate(SelecRent = rent50_1)
+    react_rent(rent)
+    
+    # county map (with CountyID as character)
+    counties <- counties_all %>% filter(Code == state_code())
+    react_counties(counties)
+    
+    # select this state
+    state <- states_all[states_all$STATE_ABBR == state_code(), ]
+    react_state(state)
+    
+  })
+  
+  # Calculates the current rent and current county values when the update button is pressed, the
+  # change view button is pressed, or the state selected is updated. The argument
   # ignoreNull allows them to be intialized when app start up.
   # NOTE: this observeEvent is included here to initialize data that reactive values rely on
-  observeEvent(c(input$update, input$changeView), {
+  observeEvent(c(input$update, input$changeView, state_code()), {
     
     hideElement(id = "mymap")
     
@@ -130,8 +128,8 @@ server <- function(input, output, session) {
   }, ignoreNULL = F)
   
   
-  # CURRENT rent DATA 
-  # - changes on score ranges, form choice, react_rent()
+  # CURRENT RENT DATA 
+  # - RECALCULATES ON CHANGE OF: score ranges, form choice, or react_rent() 
   currRent <- reactive({
     rent <- react_rent()
     
@@ -144,15 +142,15 @@ server <- function(input, output, session) {
   })
   
   
-  # CURRENT Cnty DATA
-  # - changes on currrent_data
+  # CURRENT COUNTY DATA
+  # - RECALCULATES ON CHANGE OF: currrent_data 
   currCnty <- reactive({
     
     currRent <- currRent_data()
     
-    # adds the Rent and associated Rent bin for each Cnty based on the filters 
+    # adds the rent and associated rent bin for each Cnty based on the filters 
     bins_rent <- currRent %>% filter(YEAR == max(YEAR)) 
-    cntys_with_bin <- left_join(counties, bins_rent, by = "CountyID")
+    cntys_with_bin <- left_join(react_counties(), bins_rent, by = "CountyID")
     cntys_with_bin <- cntys_with_bin  %>% 
       mutate(bin = cut(cntys_with_bin$SelecRent,
                        breaks = c(-Inf, 0, 250, 500, 1000, 2000, Inf),
@@ -185,8 +183,8 @@ server <- function(input, output, session) {
   #  CREATE REACTIVE VARIABLES  #
   ###############################
   
-  # labels for each Cnty on the map when being viewed by current Rent
-  # - REACTS ON: change to currCnty_data
+  # labels for each county on the map when being viewed by current rent
+  # - RECALCULATES ON CHANGE OF: currCnty_data
   getRentLabels <- reactive({
     currCntys <- currCnty_data()
     currCntys <- currCntys[currCntys$bin != "$0",]
@@ -198,8 +196,8 @@ server <- function(input, output, session) {
     })
   })
   
-  # labels for each Cnty on the map when being viewed by Rent growth
-  # - REACTS ON: change to currCnty_data
+  # labels for each Cnty on the map when being viewed by rent growth
+  # - RECALCULATES ON CHANGE OF: currCnty_data
   getGrowthLabels <- reactive({
     currCntys <- currCnty_data()
     currCntys <- currCntys[!(is.na(currCntys$change_bin)), ]
@@ -212,8 +210,8 @@ server <- function(input, output, session) {
   
   
   
-  # highlights the Cntys currently selected 
-  # - REACTS ON: change to myselection
+  # highlights the counties currently selected 
+  # - RECALCULATES ON CHANGE OF: myselection
   selectMap <- reactive({
     
     proxy <- leafletProxy("mymap")
@@ -222,19 +220,19 @@ server <- function(input, output, session) {
       proxy %>% clearGroup(group = "highlighted")
     } else {
       
-      # pull out the Cntys and rent that have an CountyID in selection vector
-      mycntys <- counties[counties$CountyID %in% myselection(),]
+      # pull out the counties and rent that have an CountyID in selection vector
+      mycounties <- react_counties()[react_counties()$CountyID %in% myselection(),]
       
-      # add the Cntys as white polylines and rent as circles
+      # add the counties as white polylines and rent as circles
       proxy %>% clearGroup(group = "highlighted") %>%
-        addPolylines(data = mycntys, group = "highlighted", stroke = T, weight = 3, opacity = 1, color = "white",
+        addPolylines(data = mycounties, group = "highlighted", stroke = T, weight = 3, opacity = 1, color = "white",
                      options = leafletOptions(pane = "highlighted"))
     }
   })
   
   
   # updates the historical table 
-  # - REACTS ON: change to currRent_data
+  # - RECALCULATES ON CHANGE OF: currRent_data
   newHistTbl <- reactive({
     
     # filters the rent data to only get rent in selection
@@ -253,10 +251,10 @@ server <- function(input, output, session) {
   
   
   # updates the most recent table
-  # - REACTS ON: change to newHistTbl
+  # - RECALCULATES ON CHANGE OF: newHistTbl
   newCurrTbl <- reactive({
     
-    # filters the history table to just get the rent and Rent for the most recent date
+    # filters the history table to just get the rent and rent for the most recent date
     currTbl <- newHistTbl() %>% 
       filter(Year == max(Year)) %>%
       select(Year, AverageRent) %>%
@@ -267,11 +265,11 @@ server <- function(input, output, session) {
   })
   
   
-  # updates the top Cntys table
-  # - REACTS ON: change to currCnty_data
+  # updates the top counties table
+  # - RECALCULATES ON CHANGE OF: currCnty_data
   newTopTbl <- reactive({
     
-    # gets the top 50 TIV Cntys based on the current filters
+    # gets the top 50 TIV counties based on the current filters
     topTbl <- as.data.frame(currCnty_data())
     topTbl <- topTbl %>% arrange(desc(SelecRent)) %>% select(CountyID, Name = NAME, SelectedRent = SelecRent) 
     
@@ -283,7 +281,7 @@ server <- function(input, output, session) {
   
   
   # clears anything in selection or table selection
-  # - REACTS ON: forces change to myselection when called
+  # - RECALCULATES ON CHANGE OF: forces change to myselection when called
   clearSelection <- reactive({
     # clear selection vector
     myselection(c())
@@ -303,7 +301,7 @@ server <- function(input, output, session) {
   ################
   
   # The main map to be displayed to the user. Contains Cnty, historic perimeters, moratorium areas, state border.
-  # - REACTS ON: change to currCnty_data
+  # - RECALCULATES ON CHANGE OF: currCnty_data
   
   output$mymap <- renderLeaflet({
     
@@ -313,7 +311,7 @@ server <- function(input, output, session) {
     growthCntys <- currCnty_data()
     growthCntys$growthID <- 1:nrow(growthCntys)
     
-    # filter out zero or NA values so those Cntys can be "transparent" on map
+    # filter out zero or NA values so those counties can be "transparent" on map
     currCntys <- currCntys[currCntys$bin != "$0",]
     growthCntys <- growthCntys[!is.na(growthCntys$change_bin),]
     
@@ -342,26 +340,25 @@ server <- function(input, output, session) {
       addProviderTiles(providers$Esri.WorldImagery,
                        c(providerTileOptions(noWrap = TRUE), leafletOptions(pane = "basemap"))) %>%
 
-      
-      # colored Cnty by Rent
+      # colored counties by rent
       addPolygons(data = currCntys, group = "Current Rent", layerId = ~currID, color = "#949494", weight = 1,
                   smoothFactor = 0.5, opacity = 0.5, fillOpacity = 0.7, label = lapply(Rentlabs, htmltools::HTML),
                   options = leafletOptions(pane = "polygons"), fillColor = ~colorsRent(bin),
                   highlightOptions = highlightOptions(color = "black", weight = 3)) %>%
       
-      # colored Cnty by Rent Growth
+      # colored counties by rent Growth
       addPolygons(data = growthCntys, group = "Rent Growth", layerId = ~growthID, color = "#949494", weight = 1,
                   smoothFactor = 0.5, opacity = 0.5, fillOpacity = 0.7, label = lapply(Growthlabs, htmltools::HTML),
                   options = leafletOptions(pane = "polygons"), fillColor = ~colorsGrowth(change_bin),
                   highlightOptions = highlightOptions(color = "black", weight = 3)) %>%
       
-      # county outline
+      # county outlines
       addPolygons(data = CntyOutline, layerId = ~CountyID, color = "#949494", weight = 1.3,
                   smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.0, 
                   options = c(leafletOptions(pane = "basemap"), pathOptions(clickable = F))) %>%
       
       # state border
-      addPolylines(data = st, group = "border", color = "black", opacity = 1.0, weight = 1.3, 
+      addPolylines(data = react_state(), group = "border", color = "black", opacity = 1.0, weight = 1.3, 
                    options = leafletOptions(pane = "polygons")) %>%
       
       # map labels
@@ -388,7 +385,6 @@ server <- function(input, output, session) {
     }
     
     
-    
     THE_MAP
   })
   
@@ -413,18 +409,21 @@ server <- function(input, output, session) {
   # RENDER TABLES #
   #################
   
-  # These tables will update when current Cnty/Rent data changes or the selection changes.
+  # These tables will update on changes to when current county data, the rent data, or the selection 
   
+  # the table containing data over time
   output$historicalData <- renderDT({
     data <- newHistTbl() 
     table <- datatable(data, options = list(searching = F, lengthMenu = c(5, 10)), selection = "none", rownames = F)
     table <- formatCurrency(table, c("AverageRent", "AverageRentChange"), digits = 0)
   })
   
+  # the table containing the rent for the most recent year
   output$mydata <- renderTable({
     newCurrTbl()
   })
   
+  # the table containing the top counties with the highest rent according to the current filters
   output$topCntyData <- renderDT({
     table <- datatable(newTopTbl()[,1:3], rownames = T, selection = "multiple",
                        options = list(pageLength = 10, searching = F, lengthChange = F))
@@ -436,8 +435,7 @@ server <- function(input, output, session) {
   # OBSERVE EVENTS #
   ##################
   
-  
-  # shows the select time period button only if Rent Growth is selected
+  # shows the select time period button only if rent growth is selected
   observeEvent(input$viewChoice, {
     if(input$viewChoice == "Rent Growth") {
       show(id = "selectPeriod")
@@ -494,17 +492,9 @@ server <- function(input, output, session) {
   # when the state selected changes
   observeEvent(input$selectState, {
     
-    state_code <- input$selectState
-    
-    # reload data
     shinyjs::show(id = 'loading-content')
     
-    readData(state_code)
-    
-    react_rent(rent)
-    
-    currRent()
-    currCnty()
+    state_code(input$selectState)
     
     hide(id = 'loading-content', anim = TRUE, animType = 'slide')
     shinyjs::show(id = 'app-content')
@@ -512,8 +502,7 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   
-  
-  # when the map is clicked add/remove Cntys from selection
+  # when the map is clicked add/remove counties from myselection
   observeEvent(input$mymap_shape_click, {
     
     if(is.null(input$mymap_shape_click$id)) {
@@ -542,19 +531,19 @@ server <- function(input, output, session) {
   })
   
   
-  # see if the top Cntys tab is selected and if so, match the rows selected with the Cntys selected manually via map
-  # NOTE: this makes sure that you do not lose the selection the first time you click on top Cntys tab
+  # see if the top counties tab is selected and if so, match the rows selected with the counties selected manually via map
+  # NOTE: this makes sure that you do not lose the selection the first time you click on top counties tab
   observeEvent(input$tableTabs, {
     
     if(identical(input$tableTabs, "Top Counties")){
-      # use a proxy to select the rows in the top Cntys table
+      # use a proxy to select the rows in the top counties table
       dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CountyID %in% myselection(), "rowNames"])
     } # end if
     
   })
   
   
-  # applies selections from top Cntys table to map
+  # applies selections from top counties table to map
   observeEvent(input$topCntyData_rows_selected, {
     
     # determine what has changed (compare myselection() to the rows currently selected)
@@ -584,7 +573,7 @@ server <- function(input, output, session) {
   })
   
   
-  # downloads the selected Rent to user's downloads folder 
+  # downloads the selected rent to user's downloads folder 
   output$downloadData <- downloadHandler(
     
     # creates the string that will be the file name
