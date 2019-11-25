@@ -20,7 +20,7 @@ suppressPackageStartupMessages(library(DT))
 suppressPackageStartupMessages(library(shinythemes))
 suppressPackageStartupMessages(library(data.table))
 
-setwd("Z:\\Work\\Coop\\Fall_2019\\AdaptingWFExp")
+# setwd("Z:/Work/Coop/Fall_2019/median-rent")
 
 appCSS <- "
 /* Initial Loading Page */
@@ -42,7 +42,7 @@ color: #383737;}"
 ui <- fluidPage(
   
   theme = "spacelab",
-  title = "Rent Growth Monitor",
+  title = "Median Rent Viewer",
   
   # loading screen
   useShinyjs(),
@@ -74,8 +74,8 @@ ui <- fluidPage(
       
       # TITLE PANEL
       column(12, id = "header",
-             column(9, br(), h1(id = "title", "Median Rent Viewer"), offset = 2),
-             column(1, tags$img(src = "homesitelogo.jpeg")))
+             column(9, br(), h1(id = "title", "Median Rent Viewer"), offset = 2))
+             # column(1, tags$img(src = "house.png")))
       
     ), # end fluid row
     br(),
@@ -136,7 +136,7 @@ ui <- fluidPage(
                                             value = "Selected Counties"),
                                    tabPanel(div(icon("list-ol"), "Top Counties"),
                                             br(),
-                                            h4(textOutput(outputId = "maxDate")),
+                                            h4("Highest Median Rent within Current Filters"),
                                             h6("Click on rows in table to select/unselect on map"),
                                             DTOutput(outputId = "topCntyData"),
                                             value = "Top Counties"))

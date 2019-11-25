@@ -21,7 +21,7 @@ suppressPackageStartupMessages(library(shinythemes))
 suppressPackageStartupMessages(library(data.table))
 suppressPackageStartupMessages(library(leaflet.extras))
 
-setwd("Z:\\Work\\Coop\\Fall_2019\\AdaptingWFExp")
+# setwd("Z:/Work/Coop/Fall_2019/median-rent")
 
 server <- function(input, output, session) {
   
@@ -35,9 +35,8 @@ server <- function(input, output, session) {
   # state boundary map (projected to 4326)
   states_all <- st_read("data/state boundary/WesternStates_4326.shp", quiet = T)
   
-  
   # all rent data data
-  rent_files <- list.files("data/rent", pattern = "\\.csv")
+  rent_files <- list.files("data/rent", pattern = ".csv")
   
   rent_list <- list()
   for (i in 1:length(rent_files)) {
@@ -51,12 +50,13 @@ server <- function(input, output, session) {
   
   rent_all <- do.call("rbind", rent_list)  
   colnames(rent_all)[colnames(rent_all)=="state_alpha"] <- "state"
-  rent_all$CNTYID <- as.character(rent_all$CNTYID)
+  rent_all$CountyID <- as.character(rent_all$CountyID)
   
   
   # counties
-  counties_all <- st_read("data/county/counties_WesternSts_4326.shp")
-  counties_all$CNTYID <- as.character(counties_all$CNTYID)
+  print("Reading in county data")
+  counties_all <- readRDS("data/county/counties_western_4326.RDS")
+  counties_all$CountyID <- as.character(counties_all$CountyID)
   
   # reads in the spatial data for the given state
   # GLOBAL VARIABLES UPDATED:
@@ -68,7 +68,7 @@ server <- function(input, output, session) {
     
     rent <<- rent_all %>% filter(state == state_code) %>% mutate(SelecRent = rent50_1)
     
-    # county map (with CNTYID as character)
+    # county map (with CountyID as character)
     counties <<- counties_all %>% filter(Code == state_code)
     
     # select this state
@@ -152,7 +152,7 @@ server <- function(input, output, session) {
     
     # adds the Rent and associated Rent bin for each Cnty based on the filters 
     bins_rent <- currRent %>% filter(YEAR == max(YEAR)) 
-    cntys_with_bin <- left_join(counties, bins_rent, by = "CNTYID")
+    cntys_with_bin <- left_join(counties, bins_rent, by = "CountyID")
     cntys_with_bin <- cntys_with_bin  %>% 
       mutate(bin = cut(cntys_with_bin$SelecRent,
                        breaks = c(-Inf, 0, 250, 500, 1000, 2000, Inf),
@@ -166,7 +166,7 @@ server <- function(input, output, session) {
     
     initial_rent <- currRent %>% filter(YEAR == timeperiod()[1]) %>% mutate(iRent = SelecRent)
     final_rent <- currRent %>% filter(YEAR == timeperiod()[2]) %>% mutate(fRent = SelecRent)
-    second_bin <- left_join(final_rent[, c("fRent", "CNTYID")], initial_rent[, c("iRent", "CNTYID")], by = "CNTYID")
+    second_bin <- left_join(final_rent[, c("fRent", "CountyID")], initial_rent[, c("iRent", "CountyID")], by = "CountyID")
     second_bin$rent_change <- second_bin$fRent - second_bin$iRent
     second_bin <- second_bin  %>% 
       mutate(change_bin = cut(second_bin$rent_change,
@@ -174,7 +174,7 @@ server <- function(input, output, session) {
                               labels = c("< $0", "$0.1 - $25", "$25 - $50",
                                          "$50 - $100", "$100 - $150", "> $150"),
                               right = T))
-    cntys_with_bin <- left_join(cntys_with_bin, second_bin, by = "CNTYID")
+    cntys_with_bin <- left_join(cntys_with_bin, second_bin, by = "CountyID")
     
     # stores in currCnty_data reactive value
     currCnty_data(st_as_sf(cntys_with_bin, crs = 4326))
@@ -222,8 +222,8 @@ server <- function(input, output, session) {
       proxy %>% clearGroup(group = "highlighted")
     } else {
       
-      # pull out the Cntys and rent that have an CNTYID in selection vector
-      mycntys <- counties[counties$CNTYID %in% myselection(),]
+      # pull out the Cntys and rent that have an CountyID in selection vector
+      mycntys <- counties[counties$CountyID %in% myselection(),]
       
       # add the Cntys as white polylines and rent as circles
       proxy %>% clearGroup(group = "highlighted") %>%
@@ -238,14 +238,15 @@ server <- function(input, output, session) {
   newHistTbl <- reactive({
     
     # filters the rent data to only get rent in selection
-    histTbl <- currRent_data() %>% filter(CNTYID %in% myselection())
+    histTbl <- currRent_data() %>% filter(CountyID %in% myselection())
     
     # finds the rent, TIV, and changes for each YEAR    
     histTbl <- histTbl %>%
       group_by(YEAR) %>%
       summarise(AvgRent = mean(as.numeric(SelecRent))) %>%
       mutate(AvgRent_Change = AvgRent - lag(AvgRent)) %>%
-      arrange(desc(YEAR)) 
+      arrange(desc(YEAR)) %>%
+      select(Year = YEAR, AverageRent = AvgRent, AverageRentChange = AvgRent_Change)
     
     return(histTbl)
   })
@@ -257,9 +258,10 @@ server <- function(input, output, session) {
     
     # filters the history table to just get the rent and Rent for the most recent date
     currTbl <- newHistTbl() %>% 
-      filter(YEAR == max(YEAR)) %>%
-      select(YEAR, AvgRent) %>%
-      mutate(AvgRent = paste0("$", format(as.numeric(AvgRent), format = "f", digits = 2, big.mark = ",")))
+      filter(Year == max(Year)) %>%
+      select(Year, AverageRent) %>%
+      mutate(AverageRent = paste0("$", format(as.numeric(AverageRent), format = "f", digits = 2, big.mark = ",")))
+
     
     return(currTbl)
   })
@@ -271,7 +273,7 @@ server <- function(input, output, session) {
     
     # gets the top 50 TIV Cntys based on the current filters
     topTbl <- as.data.frame(currCnty_data())
-    topTbl <- topTbl %>% select(CNTYID, SelecRent) %>% arrange(desc(SelecRent))
+    topTbl <- topTbl %>% arrange(desc(SelecRent)) %>% select(CountyID, Name = NAME, SelectedRent = SelecRent) 
     
     # adds column with row names to make selections later easier
     topTbl$rowNames <- 1:nrow(topTbl)
@@ -354,7 +356,7 @@ server <- function(input, output, session) {
                   highlightOptions = highlightOptions(color = "black", weight = 3)) %>%
       
       # county outline
-      addPolygons(data = CntyOutline, layerId = ~CNTYID, color = "#949494", weight = 1.3,
+      addPolygons(data = CntyOutline, layerId = ~CountyID, color = "#949494", weight = 1.3,
                   smoothFactor = 0.5, opacity = 0.8, fillOpacity = 0.0, 
                   options = c(leafletOptions(pane = "basemap"), pathOptions(clickable = F))) %>%
       
@@ -414,9 +416,9 @@ server <- function(input, output, session) {
   # These tables will update when current Cnty/Rent data changes or the selection changes.
   
   output$historicalData <- renderDT({
-    data <- newHistTbl() %>% rename(`AvgRent Change` = AvgRent_Change)
+    data <- newHistTbl() 
     table <- datatable(data, options = list(searching = F, lengthMenu = c(5, 10)), selection = "none", rownames = F)
-    table <- formatCurrency(table, c("AvgRent", "AvgRent Change"), digits = 0)
+    table <- formatCurrency(table, c("AverageRent", "AverageRentChange"), digits = 0)
   })
   
   output$mydata <- renderTable({
@@ -424,9 +426,9 @@ server <- function(input, output, session) {
   })
   
   output$topCntyData <- renderDT({
-    table <- datatable(newTopTbl()[,1:2], rownames = T, selection = "multiple",
+    table <- datatable(newTopTbl()[,1:3], rownames = T, selection = "multiple",
                        options = list(pageLength = 10, searching = F, lengthChange = F))
-    table <- formatCurrency(table, c("SelecRent"), digits = 0)
+    table <- formatCurrency(table, c("SelectedRent"), digits = 0)
   })
   
   
@@ -518,8 +520,8 @@ server <- function(input, output, session) {
       #do nothing
     } else {
       
-      # convert row indexed ID back to CNTYID
-      id <- currCnty_data()$CNTYID[input$mymap_shape_click$id]
+      # convert row indexed ID back to CountyID
+      id <- currCnty_data()$CountyID[input$mymap_shape_click$id]
       
       # if id is in selection remove it
       if (id %in% myselection()) {
@@ -530,7 +532,7 @@ server <- function(input, output, session) {
       }
       
       # update top Cnty data to match new selection
-      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CNTYID %in% myselection(), "rowNames"])
+      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CountyID %in% myselection(), "rowNames"])
       
       # update map display and result tables
       selectMap()
@@ -546,7 +548,7 @@ server <- function(input, output, session) {
     
     if(identical(input$tableTabs, "Top Counties")){
       # use a proxy to select the rows in the top Cntys table
-      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CNTYID %in% myselection(), "rowNames"])
+      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CountyID %in% myselection(), "rowNames"])
     } # end if
     
   })
@@ -557,7 +559,7 @@ server <- function(input, output, session) {
     
     # determine what has changed (compare myselection() to the rows currently selected)
     data <- newTopTbl()
-    newData <- newTopTbl()[input$topCntyData_rows_selected,"CNTYID"]
+    newData <- newTopTbl()[input$topCntyData_rows_selected,"CountyID"]
     oldData <- myselection()
     
     # remove items that were in selection last time but are not in new selection (if any)
@@ -593,7 +595,7 @@ server <- function(input, output, session) {
     # exports the file to the users download folder
     content = function(file) {
       data <- currRent_data() %>% filter(YEAR == max(YEAR))
-      data <- data[data$CNTYID %in% myselection()]
+      data <- data[data$CountyID %in% myselection()]
       write.csv(data, file, row.names = F)
     }
   )
