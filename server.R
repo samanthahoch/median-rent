@@ -25,7 +25,7 @@ suppressPackageStartupMessages(library(leaflet.extras))
 server <- function(input, output, session) {
   
   options(stringsAsFactors = F, scipen = 9999)
-
+  
   ################
   # READ IN DATA #
   ################
@@ -55,7 +55,7 @@ server <- function(input, output, session) {
   counties_all <- readRDS("data/county/counties_western_4326.RDS")
   counties_all$CountyID <- as.character(counties_all$CountyID)
   
-
+  
   #############################
   #   CREATE REACTIVE VALUES  #
   #############################
@@ -70,12 +70,6 @@ server <- function(input, output, session) {
   
   # selected counties list 
   myselection <- reactiveVal(c())
-  
-  # county data based on current filters
-  currCnty_data <- reactiveVal()
-  
-  # rent data based on current filters
-  currRent_data <- reactiveVal()
   
   # map groups 
   basemap <-reactiveVal("Current Rent")
@@ -114,14 +108,8 @@ server <- function(input, output, session) {
     
     hideElement(id = "mymap")
     
-    # recalculate currRent if needed
-    currRent()
-    
-    # recalculate currCnty if needed
-    currCnty()
-    
     # clear any existing selection
-    clearSelection()
+    myselection(c())
     
     showElement(id = "mymap")
     
@@ -130,21 +118,20 @@ server <- function(input, output, session) {
   
   # CURRENT RENT DATA 
   # - RECALCULATES ON CHANGE OF: score ranges, form choice, or react_rent() 
-  currRent <- reactive({
+  currRent_data <- eventReactive(c(input$changeView, input$update, state_code()), {
     rent <- react_rent()
     
     # filters the rent by the score range 
     rent$SelecRent <- rent[, input$numRooms]
     currRent <- rent %>% filter(SelecRent >= input$rentScoreRange[1] & SelecRent <= input$rentScoreRange[2])
     
-    # stores in currrent_data reactive value
-    currRent_data(currRent)
+    return(currRent)
   })
   
   
   # CURRENT COUNTY DATA
   # - RECALCULATES ON CHANGE OF: currrent_data 
-  currCnty <- reactive({
+  currCnty_data <- eventReactive(currRent_data(), {
     
     currRent <- currRent_data()
     
@@ -174,8 +161,7 @@ server <- function(input, output, session) {
                               right = T))
     cntys_with_bin <- left_join(cntys_with_bin, second_bin, by = "CountyID")
     
-    # stores in currCnty_data reactive value
-    currCnty_data(st_as_sf(cntys_with_bin, crs = 4326))
+    return(st_as_sf(cntys_with_bin, crs = 4326))
   })
   
   
@@ -210,30 +196,10 @@ server <- function(input, output, session) {
   
   
   
-  # highlights the counties currently selected 
-  # - RECALCULATES ON CHANGE OF: myselection
-  selectMap <- reactive({
-    
-    proxy <- leafletProxy("mymap")
-    
-    if(identical(myselection(), character(0)) | identical (myselection(), c())) {
-      proxy %>% clearGroup(group = "highlighted")
-    } else {
-      
-      # pull out the counties and rent that have an CountyID in selection vector
-      mycounties <- react_counties()[react_counties()$CountyID %in% myselection(),]
-      
-      # add the counties as white polylines and rent as circles
-      proxy %>% clearGroup(group = "highlighted") %>%
-        addPolylines(data = mycounties, group = "highlighted", stroke = T, weight = 3, opacity = 1, color = "white",
-                     options = leafletOptions(pane = "highlighted"))
-    }
-  })
-  
   
   # updates the historical table 
   # - RECALCULATES ON CHANGE OF: currRent_data
-  newHistTbl <- reactive({
+  histTbl <- reactive({
     
     # filters the rent data to only get rent in selection
     histTbl <- currRent_data() %>% filter(CountyID %in% myselection())
@@ -251,15 +217,15 @@ server <- function(input, output, session) {
   
   
   # updates the most recent table
-  # - RECALCULATES ON CHANGE OF: newHistTbl
-  newCurrTbl <- reactive({
+  # - RECALCULATES ON CHANGE OF: histTbl
+  currTbl <- reactive({
     
     # filters the history table to just get the rent and rent for the most recent date
-    currTbl <- newHistTbl() %>% 
+    currTbl <- histTbl() %>% 
       filter(Year == max(Year)) %>%
       select(Year, AverageRent) %>%
       mutate(AverageRent = paste0("$", format(as.numeric(AverageRent), format = "f", digits = 2, big.mark = ",")))
-
+    
     
     return(currTbl)
   })
@@ -267,7 +233,7 @@ server <- function(input, output, session) {
   
   # updates the top counties table
   # - RECALCULATES ON CHANGE OF: currCnty_data
-  newTopTbl <- reactive({
+  topTbl <- reactive({
     
     # gets the top 50 TIV counties based on the current filters
     topTbl <- as.data.frame(currCnty_data())
@@ -277,22 +243,6 @@ server <- function(input, output, session) {
     topTbl$rowNames <- 1:nrow(topTbl)
     
     return(topTbl)
-  })
-  
-  
-  # clears anything in selection or table selection
-  # - RECALCULATES ON CHANGE OF: forces change to myselection when called
-  clearSelection <- reactive({
-    # clear selection vector
-    myselection(c())
-    
-    # clear top table selection
-    dataTableProxy('topCntyData') %>% selectRows(NULL)
-    
-    # redraw map and update tables
-    selectMap()
-    newHistTbl()
-    newCurrTbl()
   })
   
   
@@ -339,7 +289,7 @@ server <- function(input, output, session) {
       # basemap
       addProviderTiles(providers$Esri.WorldImagery,
                        c(providerTileOptions(noWrap = TRUE), leafletOptions(pane = "basemap"))) %>%
-
+      
       # colored counties by rent
       addPolygons(data = currCntys, group = "Current Rent", layerId = ~currID, color = "#949494", weight = 1,
                   smoothFactor = 0.5, opacity = 0.5, fillOpacity = 0.7, label = lapply(Rentlabs, htmltools::HTML),
@@ -413,19 +363,19 @@ server <- function(input, output, session) {
   
   # the table containing data over time
   output$historicalData <- renderDT({
-    data <- newHistTbl() 
+    data <- histTbl() 
     table <- datatable(data, options = list(searching = F, lengthMenu = c(5, 10)), selection = "none", rownames = F)
     table <- formatCurrency(table, c("AverageRent", "AverageRentChange"), digits = 0)
   })
   
   # the table containing the rent for the most recent year
   output$mydata <- renderTable({
-    newCurrTbl()
+    currTbl()
   })
   
   # the table containing the top counties with the highest rent according to the current filters
   output$topCntyData <- renderDT({
-    table <- datatable(newTopTbl()[,1:3], rownames = T, selection = "multiple",
+    table <- datatable(topTbl()[,1:3], rownames = T, selection = "multiple",
                        options = list(pageLength = 10, searching = F, lengthChange = F))
     table <- formatCurrency(table, c("SelectedRent"), digits = 0)
   })
@@ -485,7 +435,7 @@ server <- function(input, output, session) {
   observeEvent(input$changeView, {
     if(basemap() != input$viewChoice) {
       basemap(input$viewChoice)
-      clearSelection()
+      myselection(c())
     }
   })
   
@@ -502,74 +452,83 @@ server <- function(input, output, session) {
   }, ignoreInit = TRUE)
   
   
+  
+  # highlights the counties currently selected on the map and in top grids table
+  observeEvent(c(myselection(), input$updateFilters), {
+    
+    # clear highlights on map
+    proxy <- leafletProxy("mymap") %>% clearGroup("highlighted")
+    
+    # update topTbl selection
+    dataTableProxy("topCntyData") %>% selectRows(which(topTbl()$CountyID %in% myselection()))
+    
+    req(myselection())
+    
+    # pull out the counties and rent that have an CountyID in selection vector
+    mycounties <- react_counties()[react_counties()$CountyID %in% myselection(),]
+    
+    # add the counties as white polylines and rent as circles
+    proxy %>% addPolylines(data = mycounties, group = "highlighted", stroke = T, weight = 3, opacity = 1, color = "white",
+                           options = leafletOptions(pane = "highlighted"))
+    
+  })
+  
+  
+  
   # when the map is clicked add/remove counties from myselection
   observeEvent(input$mymap_shape_click, {
     
-    if(is.null(input$mymap_shape_click$id)) {
-      #do nothing
-    } else {
+    # make sure id isn't null
+    if(!is.null(input$mymap_shape_clicked$id)) {
       
-      # convert row indexed ID back to CountyID
-      id <- currCnty_data()$CountyID[input$mymap_shape_click$id]
-      
-      # if id is in selection remove it
-      if (id %in% myselection()) {
-        myselection(myselection()[myselection() != id])
+      # if id is in selection, remove it
+      if (input$mymap_shape_clicked$id %in% myselection()) {
+        myselection(myselection()[myselection() != input$mymap_shape_click$id])
         
-      } else { # else add id to selection
-        myselection(c(myselection(), id))
+      } else { # add id to selection
+        myselection(c(myselection(), input$mymap_shape_click$id))
       }
-      
-      # update top Cnty data to match new selection
-      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CountyID %in% myselection(), "rowNames"])
-      
-      # update map display and result tables
-      selectMap()
-      newHistTbl()
-      newCurrTbl()
     }
+    
   })
   
   
   # see if the top counties tab is selected and if so, match the rows selected with the counties selected manually via map
   # NOTE: this makes sure that you do not lose the selection the first time you click on top counties tab
-  observeEvent(input$tableTabs, {
-    
-    if(identical(input$tableTabs, "Top Counties")){
-      # use a proxy to select the rows in the top counties table
-      dataTableProxy('topCntyData') %>% selectRows(newTopTbl()[newTopTbl()$CountyID %in% myselection(), "rowNames"])
-    } # end if
-    
+  observeEvent({identical(input$tableTabs, "Top Counties")}, {
+    dataTableProxy('topCntyData') %>% selectRows(topTbl()[topTbl()$CountyID %in% myselection(), "rowNames"])
   })
   
   
   # applies selections from top counties table to map
   observeEvent(input$topCntyData_rows_selected, {
+  
+    topTblSelection <- topTbl()[input$topCntyData_rows_selected, "CountyID"]
     
-    # determine what has changed (compare myselection() to the rows currently selected)
-    data <- newTopTbl()
-    newData <- newTopTbl()[input$topCntyData_rows_selected,"CountyID"]
-    oldData <- myselection()
-    
-    # remove items that were in selection last time but are not in new selection (if any)
-    removedItems <- oldData[!(oldData %in% newData)]
-    myselection(myselection()[!(myselection() %in% removedItems)])
-    
-    # adds items that are in selection this time but not in old selection (if any)
-    newItems <- newData[!(newData %in% oldData)]
-    myselection(c(myselection(), newItems))
-    
-    # update map display and result tables
-    selectMap()
-    newHistTbl()
-    newCurrTbl()
+    # if the rows selected don't match the current displayed selection
+    if (!setequal(topTblSelection, myselection())) {
+      
+      # determine if the selection is an item to add to myselection
+      newItem <- topTblSelection[!(topTblSelection %in% myselection())]
+      
+      # only zoom to grid if new and zoom switch is true
+      if (length(newItem) == 1 && input$zoomSwitch) {
+        new_county <- state_data$grid[state_data$grid$CountyID == newItem, ]
+        zoom_coords <- suppressWarnings(st_coordinates(st_centroid(new_county)))
+        
+        leafletProxy("mymap") %>% setView(zoom_coords[1], zoom_coords[2], zoom = 11)
+      }
+      
+      # set myselection to the rows currently selected in table
+      myselection(topTblSelection)
+    }
     
   }, ignoreNULL = F)
   
   
   # when the clear selection button is pressed
   observeEvent(input$clearSelection, {
-    clearSelection()
+    myselection(c())
   })
   
   

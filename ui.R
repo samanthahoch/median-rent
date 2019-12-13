@@ -75,7 +75,7 @@ ui <- fluidPage(
       # TITLE PANEL
       column(12, id = "header",
              column(9, br(), h1(id = "title", "Median Rent Viewer"), offset = 2))
-             # column(1, tags$img(src = "house.png")))
+      # column(1, tags$img(src = "house.png")))
       
     ), # end fluid row
     br(),
@@ -112,8 +112,8 @@ ui <- fluidPage(
              wellPanel(
                h4("Select State"),
                selectInput(inputId = "selectState", label = "State Options",
-               choices = c("AZ", "CA", "CO", "ID", "MT", "NM", "NV", "OK", "OR", "TX", "UT", "WA", "WY"),
-               selected = "CA")
+                           choices = c("AZ", "CA", "CO", "ID", "MT", "NM", "NV", "OK", "OR", "TX", "UT", "WA", "WY"),
+                           selected = "CA")
              )
       ), 
       
@@ -136,8 +136,12 @@ ui <- fluidPage(
                                             value = "Selected Counties"),
                                    tabPanel(div(icon("list-ol"), "Top Counties"),
                                             br(),
-                                            h4("Highest Median Rent within Current Filters"),
-                                            h6("Click on rows in table to select/unselect on map"),
+                                            splitLayout(cellWidths = c(325, 150),
+                                                        div(h4("Highest Median Rent within Current Filters"),
+                                                            h6("Click on rows in table to select/unselect on map")),
+                                                        div(br(),
+                                                            switchInput(inputId = "zoomSwitch", size = "small",
+                                                                        label = "Zoom to Grid", value = TRUE))),
                                             DTOutput(outputId = "topCntyData"),
                                             value = "Top Counties"))
              ), # end tab panel
