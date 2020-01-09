@@ -100,10 +100,12 @@ ui <- fluidPage(
                h4("View By"), 
                radioButtons(inputId = "viewChoice", label = NULL,
                             choices = c("Current Rent", "Rent Growth")), 
-               hidden(actionBttn(inputId = "selectPeriod", label = "Select Period", style = "unite",
-                                 color = "default", icon = icon("calendar", lib = "font-awesome"), size = "sm")),
-               br(),
-               hidden(textOutput(outputId = "currPeriod")), br(), 
+               conditionalPanel(condition = "input.viewChoice == 'Rent Growth'",
+                                actionBttn(inputId = "selectPeriod", label = "Select Period",
+                                           style = "unite", color = "default",
+                                           icon = icon("calendar", lib = "font-awesome"), size = "sm"), br(),
+                                textOutput(outputId = "currPeriod"), br()
+               ),
                actionBttn(inputId = "changeView", label = "Change View", style = "unite",
                           color = "warning", icon = icon("transfer", lib = "glyphicon"), size = "sm")
              ),
@@ -130,7 +132,7 @@ ui <- fluidPage(
                                    tabPanel(div(icon("mouse-pointer"), "Selected Counties"),
                                             br(), h4("Selected Counties"), br(),
                                             h5("Most Recent Rent"),
-                                            tableOutput(outputId = "mydata"), br(), 
+                                            tableOutput(outputId = "currData"), br(), 
                                             h5("History"), br(),
                                             DTOutput(outputId = "historicalData"),
                                             value = "Selected Counties"),
@@ -141,7 +143,7 @@ ui <- fluidPage(
                                                             h6("Click on rows in table to select/unselect on map")),
                                                         div(br(),
                                                             switchInput(inputId = "zoomSwitch", size = "small",
-                                                                        label = "Zoom to Grid", value = TRUE))),
+                                                                        label = "Zoom to County", value = TRUE))),
                                             DTOutput(outputId = "topCntyData"),
                                             value = "Top Counties"))
              ), # end tab panel
